@@ -1,7 +1,14 @@
 # Multi-Channel AI Sales Agent
 
 A Multi-channel AI sales agent (n8n, HubSpot, OpenAI, RAG, Qdrant, Gemini, Slack) that unifies Web Chat, Email, SMS & WhatsApp into one customer identity with full cross-channel conversation memory, every message and reply is logged to HubSpot, with anonymous web-chat visitors tracked via a custom Web Session ID property. Retrieves answers via RAG, books meetings, updates CRM records, replies in the customer's language, and gates every quote behind human approval, with signature-verified inbound webhooks.
+<table>
+  <tr>
+    <td><img src="assets/screenshots/slack-channel-notification.png" width="400"></td>
+    <td><img src="assets/screenshots/approval-form.png" width="400"></td>
+  </tr>
+</table>
 
+slack-channel-notification.png
 > Full technical documentation — data contracts, node-level behavior, testing status is in
 [`PROJECT_DOCUMENTATION_FULL.md`](./PROJECT_DOCUMENTATION_FULL.md).
 
