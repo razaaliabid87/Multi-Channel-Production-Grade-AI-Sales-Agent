@@ -1,6 +1,6 @@
 # Multi-Channel AI Sales Agent
 
-> A portfolio-scale, multi-channel AI sales automation system built with **n8n**, **HubSpot**, **OpenAI**, **Qdrant**, and **Gemini embeddings**.
+> A multi-channel AI sales automation system built with **n8n**, **HubSpot**, **RAG**, **OpenAI**, **Qdrant**, and **Gemini embeddings**.
 
 The system receives customer conversations through **Web Chat, Email, SMS, and WhatsApp**, resolves the customer to a HubSpot contact, retrieves conversation history and knowledge, qualifies leads, books meetings, and handles quote requests through a human approval workflow.
 
@@ -1331,6 +1331,6 @@ The central principle is that the AI should be able to **reason and request acti
 
 ## Project Status
 
-**Current status:** Portfolio-scale, multi-channel AI sales automation system with core workflows implemented and tested, human-gated pricing, production-minded safety boundaries, and several clearly documented verification items and deferred capabilities.
+**Current status:** Multi-channel AI sales automation system with core workflows implemented and tested, human-gated pricing, production-minded safety boundaries, and several clearly documented verification items and deferred capabilities.
 
 The implementation should be evaluated according to what is explicitly built and tested rather than treating deferred features as completed functionality.
