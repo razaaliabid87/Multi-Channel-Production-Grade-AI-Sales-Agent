@@ -1,0 +1,311 @@
+{
+  "name": "Tool - Request Quote Draft",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Request Quote Draft\n\nHONEST SIMPLIFICATION, not a full implementation: HubSpot's native Quotes API requires a quoteTemplateId and real line-item/product IDs from your portal, which aren't available yet. Rather than guess at those and risk creating a malformed or wrong-priced quote, this tool creates a Deal (if needed) and a clearly-flagged note capturing exactly what the customer wants — for a human to turn into a real Quote.\n\nThis is a deliberate stand-in for the real Workflow C (human approval + native Quote creation) that hasn't been built yet. The mandatory-human-review property (Rule 9) is satisfied by the fact that NOTHING gets sent to the customer from this tool at all — a human must act on the flagged note before anything reaches them.\n\nneeds_review guard still applies on top of this, for identity-certainty reasons independent of the quote-approval requirement itself.",
+        "height": 320,
+        "width": 500
+      },
+      "name": "Sticky - Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -128,
+        -48
+      ],
+      "id": "c9f70d11-525d-4a96-b82d-899ba5a665ad"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "hubspot_contact_id"
+            },
+            {
+              "name": "needs_review",
+              "type": "boolean"
+            },
+            {
+              "name": "package_name"
+            },
+            {
+              "name": "notes"
+            },
+            {
+              "name": "channel"
+            }
+          ]
+        }
+      },
+      "name": "When Executed by AI Agent",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        480,
+        208
+      ],
+      "id": "b6ee4dc7-6fcd-4e1f-92a4-09f1d9910943"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.needs_review}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              },
+              "id": "519adf05-7b48-4e8f-a39c-9ccd731fcae3"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Needs Review",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        208
+      ],
+      "id": "b9ca94fe-2c42-458d-90fa-8c5078d42cc2"
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { success: false, reason: 'Contact identity is pending manual review — quote request was not logged. Do not tell the customer a quote is coming yet.' } };"
+      },
+      "name": "Return Blocked - Needs Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        112
+      ],
+      "id": "f62c8445-5029-405c-b4b8-83cf56f81acb"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { dealname: ($('When Executed by AI Agent').package_name || 'Package') + ' - quote requested', dealstage: 'presentationscheduled', pipeline: 'default' }, associations: [ { to: { id: $('When Executed by AI Agent').item.json.hubspot_contact_id}, types: [ { associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 3 } ] } ] }) }}\n\n\n",
+        "options": {}
+      },
+      "name": "Create Deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        960,
+        272
+      ],
+      "id": "9f3a359c-bedc-45f4-8ac5-fc001103f421",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "dealstage/pipeline values ('presentationscheduled'/'default') are HubSpot's out-of-the-box internal names — verify against your actual portal's pipeline configuration if you've customized stages, per Rule 3. associationTypeId 3 is the standard deal-to-contact association."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: {\n    hs_note_body: '[QUOTE REQUESTED - NEEDS HUMAN QUOTE CREATION]\\nPackage: ' + ($('When Executed by AI Agent').item.json.package_name || 'not specified') + '\\nNotes from conversation: ' + ($('When Executed by AI Agent').item.json.notes || 'none') + '\\n\\nA human must create and send the actual HubSpot Quote — this was not sent to the customer automatically.',\n    hs_timestamp: Date.now()\n  },\n  associations: [\n    {\n      to: { id: $('When Executed by AI Agent').item.json.hubspot_contact_id },\n      types: [ { associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 } ]\n    }\n  ]\n}) }}",
+        "options": {}
+      },
+      "name": "Flag Note for Human Quote Creation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1200,
+        272
+      ],
+      "id": "bb7ae9d2-7cba-436b-96e0-69fbe1b07650",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "This note is the actual HITL gate for this tool (Rule 9) — nothing reaches the customer until a human acts on it. Runs regardless of whether Create Deal succeeded, so the flag still exists even if the deal creation had an issue."
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C0BMENU62TG"
+        },
+        "text": "=:memo: *Quote requested* — needs review\n\n*Package:* {{ $('When Executed by AI Agent').item.json.package_name || 'not specified' }}\n*Notes:* {{ $('When Executed by AI Agent').item.json.notes || 'none' }}\n*Contact ID:* {{ $('When Executed by AI Agent').item.json.hubspot_contact_id }}\n*Channel:* {{ $('When Executed by AI Agent').item.json.channel }}\n\n\nReview and approve here: <https://n8n.anabiyah.online/form/quote-approval?deal_id={{ $('Create Deal').item.json.id }}&contact_id={{ $('When Executed by AI Agent').item.json.hubspot_contact_id }}&package_name={{ encodeURIComponent($('When Executed by AI Agent').item.json.package_name) }}&channel={{ encodeURIComponent($('When Executed by AI Agent').item.json.channel) }}>",
+        "otherOptions": {}
+      },
+      "name": "Send Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        272
+      ],
+      "id": "8cbdd508-4181-4240-8e05-1c543739fa86",
+      "webhookId": "8e6b63c7-95ee-43eb-9d16-4d534a124486",
+      "credentials": {
+        "slackApi": {
+          "id": "hxzS4nKsH3E3pwdF",
+          "name": "Slack account"
+        }
+      },
+      "notes": "Plain message, not interactive buttons — deliberately avoids building full Slack app interactivity (real security/setup cost) for a portfolio-scale project. The link opens the n8n Form where the actual approval happens. YOUR_N8N_HOST and the Slack channel ID are placeholders — verify against your real n8n instance URL and Slack workspace before running."
+    },
+    {
+      "parameters": {
+        "jsCode": "const dealFailed = $json.error !== undefined; // reflects Send Slack Notification's own result, checked last\nreturn {\n  json: {\n    success: !dealFailed,\n    reason: dealFailed ? 'Failed to log/notify for quote request: ' + String($json.error) : null,\n    status: dealFailed ? null : 'flagged_for_human_review'\n  }\n};"
+      },
+      "name": "Format Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        272
+      ],
+      "id": "e4bbd819-428f-41da-a2b3-f8819460fc31"
+    }
+  ],
+  "pinData": {
+    "When Executed by AI Agent": [
+      {
+        "json": {
+          "hubspot_contact_id": "532196715246",
+          "needs_review": false,
+          "package_name": "IoT Package",
+          "notes": "Bilal requested a quote for the IoT Package. Contact info: 03211112222, bilal@test.com",
+          "channel": "webchat"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by AI Agent": {
+      "main": [
+        [
+          {
+            "node": "IF - Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Needs Review": {
+      "main": [
+        [
+          {
+            "node": "Return Blocked - Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Deal": {
+      "main": [
+        [
+          {
+            "node": "Flag Note for Human Quote Creation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag Note for Human Quote Creation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag Note for Human Quote Creation": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Notification": {
+      "main": [
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "c487186d-eddd-4412-9d2d-3b708c369582",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "22a94396d635bdc18c036410c0b06da7851292b894f2255bca52f69454134ddc"
+  },
+  "nodeGroups": [],
+  "id": "NZ4Oj5PXGOIhQ1Ep",
+  "tags": []
+}

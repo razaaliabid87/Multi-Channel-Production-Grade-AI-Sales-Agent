@@ -1,0 +1,288 @@
+{
+  "name": "Tool - Update HubSpot Property",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Update HubSpot Property\n\nLow-stakes, reversible write — per Rule 9, no HITL gate needed, but still guarded by needs_review (identity uncertainty, not action risk) and a property allowlist (the agent can only touch qualification fields, never anything structural).\n\nhubspot_contact_id and needs_review are TRUSTED inputs wired from Workflow B's context — never let the agent supply these itself.",
+        "height": 220,
+        "width": 460
+      },
+      "name": "Sticky - Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "6ba48cb5-3ad5-43bf-a104-d55c92e3bba4"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "hubspot_contact_id"
+            },
+            {
+              "name": "needs_review",
+              "type": "boolean"
+            },
+            {
+              "name": "property_name"
+            },
+            {
+              "name": "property_value"
+            }
+          ]
+        }
+      },
+      "name": "When Executed by AI Agent",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        464,
+        208
+      ],
+      "id": "52b91112-82ff-44e3-aa5a-339e25b06112"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.needs_review}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Needs Review",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        704,
+        208
+      ],
+      "id": "4686eb8d-47bc-42f3-adea-529e172d3278"
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { success: false, reason: 'Contact identity is pending manual review — this update was not applied. Do not tell the customer it was saved.' } };"
+      },
+      "name": "Return Blocked - Needs Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        112
+      ],
+      "id": "f286f610-4b6e-477f-abe6-8def19c7d7c7"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Allowlist — the agent can only write real qualification fields, never anything\n// structural (no lifecyclestage overrides to arbitrary values, no internal HubSpot\n// system properties). Rejecting an unlisted property fails loudly, per Rule 5.\nconst ALLOWED_PROPERTIES = ['email', 'phone', 'firstname', 'lastname', 'hs_lead_status', 'jobtitle', 'company'];\n\nconst name = $json.property_name;\nif (!ALLOWED_PROPERTIES.includes(name)) {\n  return { json: { valid: false, reason: `Property '${name}' is not in the allowed list for automated updates.` } };\n}\nif (!$json.property_value || String($json.property_value).trim() === '') {\n  return { json: { valid: false, reason: 'property_value cannot be empty.' } };\n}\n\nreturn { json: { valid: true, property_name: name, property_value: $json.property_value } };"
+      },
+      "name": "Validate Property",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        272
+      ],
+      "id": "483337e9-8996-4e57-9e5a-c8d6504e1a38"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.valid}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Property Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        272
+      ],
+      "id": "57180813-e4d0-481e-b786-e9c972389f1a"
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { success: false, reason: $json.reason } };"
+      },
+      "name": "Return Blocked - Invalid Property",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        368
+      ],
+      "id": "bf972911-3a9a-48eb-898b-b39e4267b723"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $('When Executed by AI Agent').item.json.hubspot_contact_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { [$json.property_name]: $json.property_value } }) }}",
+        "options": {}
+      },
+      "name": "Update Contact Property",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1424,
+        208
+      ],
+      "id": "d4655b0c-d165-4648-8b04-3ae328fee591",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const failed = $json.error !== undefined;\nif (failed) {\n  return { json: { success: false, reason: 'HubSpot update failed: ' + String($json.error) } };\n}\nreturn { json: { success: true, property_name: $('Validate Property').item.json.property_name, property_value: $('Validate Property').item.json.property_value } };"
+      },
+      "name": "Format Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        208
+      ],
+      "id": "7df91359-da60-40e6-8431-ff6e81fd129f"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by AI Agent": {
+      "main": [
+        [
+          {
+            "node": "IF - Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Needs Review": {
+      "main": [
+        [
+          {
+            "node": "Return Blocked - Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate Property",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Property": {
+      "main": [
+        [
+          {
+            "node": "IF - Property Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Property Valid": {
+      "main": [
+        [
+          {
+            "node": "Update Contact Property",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Blocked - Invalid Property",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Contact Property": {
+      "main": [
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "a1dae8ef-79ee-47b7-b449-e18547559186",
+  "meta": {
+    "instanceId": "22a94396d635bdc18c036410c0b06da7851292b894f2255bca52f69454134ddc"
+  },
+  "nodeGroups": [],
+  "id": "dvdMaP9PDZOrWeH3",
+  "tags": []
+}

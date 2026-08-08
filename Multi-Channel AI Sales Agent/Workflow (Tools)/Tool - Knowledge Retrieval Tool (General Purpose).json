@@ -1,0 +1,434 @@
+{
+  "name": "Tool - Knowledge Retrieval Tool (General Purpose)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow D — General-purpose Knowledge Retrieval Tool\n\nDesigned to be callable from ANY agent project, not just this Sales Agent — input/output contract deliberately has no sales/CRM-specific fields.\n\nReuses the real, proven embedding + Qdrant logic from '1 - Query Processing' (Gemini gemini-embedding-001, same Qdrant payload shape, same threshold-status pattern).\n\nDeliberately does NOT include a final LLM answer-composition step (unlike the original '2 - Context Optimization Engine', which ends in a Basic LLM Chain) — the calling agent composes the reply itself. This tool's job stops at: relevant chunks, or an explicit no-match signal.\n\nINPUT: { query: string, top_k?: number (default 5), filters?: object }\nOUTPUT: { found: boolean, chunks: [{ text, source_file, section_title, score }], chunk_count, best_score, status }",
+        "height": 340,
+        "width": 480
+      },
+      "name": "Sticky - Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -176,
+        -144
+      ],
+      "id": "b1faeadd-ff55-44a9-832c-e51a9f947787"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "query"
+            },
+            {
+              "name": "top_k",
+              "type": "number"
+            },
+            {
+              "name": "filters",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        432,
+        192
+      ],
+      "id": "00c94e21-2c94-45b5-b981-464b6aa8e86d"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input validation — same pattern as your existing 'Validate Request' node,\n// generalized: no company/department/customer fields, since this is meant\n// to be reusable across unrelated projects.\nconst input = $json;\n\nif (!input.query || typeof input.query !== 'string' || input.query.trim().length === 0) {\n  return { json: { valid: false, error: 'query is required and must be a non-empty string' } };\n}\n\nlet topK = input.top_k;\nif (topK === undefined || topK === null || topK === '') {\n  topK = 5;\n}\ntopK = parseInt(topK, 10);\nif (isNaN(topK) || topK < 1) topK = 5;\nif (topK > 20) topK = 20; // safety ceiling — a tool call shouldn't return an unbounded chunk set\n\nreturn {\n  json: {\n    valid: true,\n    query: input.query.trim(),\n    top_k: topK,\n    filters: input.filters || {}\n  }\n};"
+      },
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        304
+      ],
+      "id": "d6cf479d-ddf5-43ec-8085-eda69863f390"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.valid}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Input Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        960,
+        304
+      ],
+      "id": "3ca5f0e9-0ce5-4d32-8fd8-30b3f1926885"
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { found: false, chunks: [], chunk_count: 0, best_score: 0, status: 'INVALID_INPUT', error: $json.error } };"
+      },
+      "name": "Return Invalid Input Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        464
+      ],
+      "id": "998d913b-b636-4830-8da3-167c4eb3b87f",
+      "notes": "Returns gracefully rather than throwing — this tool is called mid-conversation by an agent; an unhandled error here shouldn't break the whole agent turn."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gemini-embedding-001"
+            },
+            {
+              "name": "content.parts[0].text",
+              "value": "={{ $json.query }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Generate Query Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1200,
+        224
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "id": "ca5df6e5-6e0d-456a-8085-18d2ec56c43a",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "thnOcnvjIC2zdqMH",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Same model and credential type as your existing Query Processing workflow — must match whatever embedding model was used to index the knowledge_base collection, or search results will be meaningless. Same googlePalmApi credential reused, not a new one."
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { found: false, chunks: [], chunk_count: 0, best_score: 0, status: 'EMBEDDING_ERROR', error: 'Failed to generate query embedding' } };"
+      },
+      "name": "Return Embedding Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        400
+      ],
+      "id": "8786d1a8-1971-45f2-8597-de2d9b1da195"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "searchPayload.query",
+              "value": "={{ $json.embedding.values }}",
+              "type": "array"
+            },
+            {
+              "name": "searchPayload.limit",
+              "value": "={{ $('Validate Input').item.json.top_k }}",
+              "type": "number"
+            },
+            {
+              "name": "searchPayload.with_payload",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "name": "searchPayload.with_vector",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "name": "searchPayload.using",
+              "value": "text",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Prepare Qdrant Search Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1440,
+        224
+      ],
+      "id": "df124f53-7ab5-4c37-bda4-17e0d799255f",
+      "notes": "Exact same payload shape as your existing Qdrant Vector Search node — this is the part that's genuinely fixed by how your collection was indexed, not something to change per project."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://172.17.0.3:6333/collections/knowledge_base/points/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.searchPayload }}",
+        "options": {}
+      },
+      "name": "Qdrant Vector Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1680,
+        224
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "id": "997e230f-a0d3-43b5-bc20-2f28856d74fc",
+      "onError": "continueErrorOutput",
+      "notes": "Host/collection copied directly from your working workflow. If this tool ever needs to search a DIFFERENT collection for a different project, that's the one line to change — everything else here stays generic."
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { found: false, chunks: [], chunk_count: 0, best_score: 0, status: 'SEARCH_ERROR', error: 'Qdrant search failed' } };"
+      },
+      "name": "Return Search Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        400
+      ],
+      "id": "a9644de8-abe9-43b7-8991-07bcc938dc9c"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        48,
+        432
+      ],
+      "id": "b3a5fb3a-2334-4220-a79e-a23a31bda335",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "75c5d0c3-770a-4873-9cb4-999c06f29855",
+              "name": "query",
+              "value": "I need to your wifi services...",
+              "type": "string"
+            },
+            {
+              "id": "6683504a-de79-4023-80ad-4f81e8200d7f",
+              "name": "top_k",
+              "value": "8",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        368,
+        448
+      ],
+      "id": "fa829c15-a16f-4dd5-b799-4dd6e89eac1c",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Threshold + generic metadata filtering + dedup + adjacent-chunk merge/compress + final formatting.\n// Reuses proven threshold default (0.50), and the dedup/merge/compress logic\n// from the existing Context Optimization Engine, adapted for Workflow D's simpler contract.\n// Deliberately NOT included here (deferred, per project decision): composite ranking/diversity,\n// query-complexity-based dynamic budgeting — see project notes.\nconst MIN_SCORE = 0.50;\nconst topInput = $('Validate Input').item.json;\nconst filters = topInput.filters || {};\n\nconst points = $json.result?.points || [];\n\nfunction compressText(text, sectionTitle) {\n  if (!text) return '';\n  let result = text.replace(/[ \\t]+\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();\n  if (sectionTitle) {\n    const titleIndex = result.indexOf(sectionTitle);\n    if (titleIndex !== -1) {\n      const secondOccurrence = result.indexOf(sectionTitle, titleIndex + sectionTitle.length);\n      if (secondOccurrence !== -1) {\n        result = result.slice(0, secondOccurrence) + result.slice(secondOccurrence + sectionTitle.length);\n        result = result.replace(/\\n{3,}/g, '\\n\\n').trim();\n      }\n    }\n  }\n  return result;\n}\n\n// Merges runs of consecutive chunk_index values within the same document —\n// e.g. a package's pricing details split across two adjacent chunks come\n// back as one coherent block instead of two disjointed ones.\nfunction mergeAdjacentChunks(chunks) {\n  const byDocument = new Map();\n  for (const chunk of chunks) {\n    const key = chunk.document_uuid ?? 'unknown';\n    if (!byDocument.has(key)) byDocument.set(key, []);\n    byDocument.get(key).push(chunk);\n  }\n\n  const merged = [];\n  for (const group of byDocument.values()) {\n    group.sort((a, b) => (a.chunk_index ?? 0) - (b.chunk_index ?? 0));\n    let current = null;\n    for (const chunk of group) {\n      const isAdjacent =\n        current !== null &&\n        typeof chunk.chunk_index === 'number' &&\n        typeof current._lastChunkIndex === 'number' &&\n        chunk.chunk_index === current._lastChunkIndex + 1;\n\n      if (isAdjacent) {\n        current.text = `${current.text}\\n\\n${chunk.text ?? ''}`.trim();\n        current.score = Math.max(current.score, chunk.score ?? 0);\n        current._lastChunkIndex = chunk.chunk_index;\n      } else {\n        if (current) merged.push(current);\n        current = { ...chunk, text: chunk.text ?? '', _lastChunkIndex: chunk.chunk_index };\n      }\n    }\n    if (current) merged.push(current);\n  }\n  return merged;\n}\n\nlet status;\nif (points.length === 0) {\n  status = 'EMPTY_COLLECTION';\n} else {\n  const aboveThreshold = points.filter(p => (p.score ?? 0) >= MIN_SCORE);\n\n  let filtered = aboveThreshold;\n  const filterKeys = Object.keys(filters);\n  if (filterKeys.length > 0) {\n    filtered = aboveThreshold.filter(p =>\n      filterKeys.every(key => p.payload && p.payload[key] === filters[key])\n    );\n  }\n\n  if (filtered.length === 0) {\n    status = 'NO_MATCH';\n  } else {\n    // 1. Dedup by chunk_uuid — Qdrant's own overlapping chunking can otherwise return the same chunk twice.\n    const seen = new Set();\n    const deduped = filtered.filter(p => {\n      const uuid = p.payload?.chunk_uuid;\n      if (!uuid || seen.has(uuid)) return uuid ? false : true; // keep if no uuid to key on, dedup if present\n      seen.add(uuid);\n      return true;\n    });\n\n    // 2. Map to a plain working shape carrying what merge/compress needs.\n    const mapped = deduped.map(p => ({\n      text: p.payload?.text || '',\n      source_file: p.payload?.file_name || null,\n      section_title: p.payload?.section_title || null,\n      score: p.score ?? 0,\n      document_uuid: p.payload?.document_uuid || null,\n      chunk_index: p.payload?.chunk_index\n    }));\n\n    // 3. Merge adjacent chunks within the same document.\n    const merged = mergeAdjacentChunks(mapped);\n\n    // 4. Compress merged text.\n    for (const chunk of merged) {\n      chunk.text = compressText(chunk.text, chunk.section_title);\n    }\n\n    // 5. Final sort by score, strip internal-only fields before returning.\n    const chunks = merged\n      .sort((a, b) => b.score - a.score)\n      .map(({ text, source_file, section_title, score }) => ({ text, source_file, section_title, score }));\n\n    return {\n      json: {\n        found: true,\n        chunks,\n        chunk_count: chunks.length,\n        best_score: chunks[0].score,\n        status: 'SUCCESS'\n      }\n    };\n  }\n}\n\nreturn { json: { found: false, chunks: [], chunk_count: 0, best_score: 0, status } };"
+      },
+      "name": "Filter, Format & Return1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        208
+      ],
+      "id": "9627d15c-6a96-4fbc-8065-0abd46c6c763",
+      "notes": "This is the design decision from earlier in the project, applied here in its general form: never silently return low-confidence chunks. 'found: false' with an explicit status is always safer for a calling agent to branch on than an empty-but-technically-successful array."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "IF - Input Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Input Valid": {
+      "main": [
+        [
+          {
+            "node": "Generate Query Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Invalid Input Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Query Embedding": {
+      "main": [
+        [
+          {
+            "node": "Prepare Qdrant Search Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Embedding Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Qdrant Search Payload": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Vector Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Vector Search": {
+      "main": [
+        [
+          {
+            "node": "Filter, Format & Return1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Search Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "6c665646-4e46-42d0-8594-b50a9a10233c",
+  "meta": {
+    "instanceId": "22a94396d635bdc18c036410c0b06da7851292b894f2255bca52f69454134ddc"
+  },
+  "nodeGroups": [],
+  "id": "Zr7hxXY0RVTID7Uk",
+  "tags": []
+}

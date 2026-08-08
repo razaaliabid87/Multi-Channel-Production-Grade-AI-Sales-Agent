@@ -1,0 +1,303 @@
+{
+  "name": "Tool - Book Meeting",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Book Meeting\n\nReversible (can be rescheduled/cancelled) — no HITL gate needed per Rule 9, but still guarded by needs_review, plus a basic future-date sanity check since a wrong/past datetime from the agent is a real, if minor, failure mode worth catching before it hits HubSpot.",
+        "height": 200,
+        "width": 460
+      },
+      "name": "Sticky - Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "e2206d91-d3be-4d6c-835e-7db402a0d9e6"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "hubspot_contact_id"
+            },
+            {
+              "name": "needs_review",
+              "type": "boolean"
+            },
+            {
+              "name": "meeting_datetime_iso"
+            },
+            {
+              "name": "meeting_title"
+            }
+          ]
+        }
+      },
+      "name": "When Executed by AI Agent",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        464,
+        208
+      ],
+      "id": "9e0b5602-869e-4649-8727-02daad2b4317"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.needs_review}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Needs Review",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        704,
+        208
+      ],
+      "id": "18c97629-a90d-45d9-8111-c5eca83332a4"
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { success: false, reason: 'Contact identity is pending manual review — meeting was not booked. Do not tell the customer it is confirmed.' } };"
+      },
+      "name": "Return Blocked - Needs Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        112
+      ],
+      "id": "3d3e8412-06ee-4b78-991d-db39a8791fa3"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Basic sanity check — catches an obviously wrong datetime (past, unparseable)\n// before it reaches HubSpot. Not full calendar-availability validation (that's\n// HubSpot's own job when the meeting is actually created).\nconst raw = $json.meeting_datetime_iso;\nconst parsed = new Date(raw);\n\nif (isNaN(parsed.getTime())) {\n  return { json: { valid: false, reason: `Could not parse '${raw}' as a valid date/time.` } };\n}\nif (parsed.getTime() <= Date.now()) {\n  return { json: { valid: false, reason: 'The proposed meeting time is in the past.' } };\n}\n\nreturn { json: { valid: true, meeting_datetime_iso: parsed.toISOString(), meeting_title: $json.meeting_title || 'Sales call' } };"
+      },
+      "name": "Validate Meeting Time",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        272
+      ],
+      "id": "679b7774-609c-4b29-b1d3-31a955f1d25e"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.valid}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Time Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        272
+      ],
+      "id": "cc4dcb6a-7155-4293-a8ab-77701d8f8099"
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { success: false, reason: $json.reason } };"
+      },
+      "name": "Return Blocked - Invalid Time",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        368
+      ],
+      "id": "04eaba1c-ed31-4564-90c6-d59e6eb0f331"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/meetings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: {\n    hs_timestamp: new Date($json.meeting_datetime_iso).getTime(),\n    hs_meeting_title: $json.meeting_title,\n    hs_meeting_start_time: new Date($json.meeting_datetime_iso).getTime(),\n    hs_meeting_end_time: new Date($json.meeting_datetime_iso).getTime() + (30 * 60 * 1000),\n    hs_meeting_outcome: 'SCHEDULED'\n  },\n  associations: [\n    {\n      to: { id: $('When Executed by AI Agent').item.json.hubspot_contact_id },\n      types: [ { associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 200 } ]\n    }\n  ]\n}) }}",
+        "options": {}
+      },
+      "name": "Create Meeting",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1424,
+        208
+      ],
+      "id": "37adc385-3844-46b4-81f3-dab21e3d99de",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "associationTypeId 200 is HubSpot's standard meeting-to-contact association — verify this against your portal's actual association type IDs in the live editor before trusting it (Rule 3); these can vary if custom associations exist."
+    },
+    {
+      "parameters": {
+        "jsCode": "const failed = $json.error !== undefined;\nif (failed) {\n  return { json: { success: false, reason: 'Meeting creation failed: ' + String($json.error) } };\n}\nreturn { json: { success: true, meeting_id: $json.id, scheduled_time: $('Validate Meeting Time').item.json.meeting_datetime_iso } };"
+      },
+      "name": "Format Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        208
+      ],
+      "id": "a801f59b-ddf8-40c4-b45c-e6fc4d2c4635"
+    }
+  ],
+  "pinData": {
+    "When Executed by AI Agent": [
+      {
+        "json": {
+          "hubspot_contact_id": "532178929344",
+          "needs_review": false,
+          "meeting_datetime_iso": "2026-08-10T16:00:00+05:00",
+          "meeting_title": "IoT Package Consultation with Bilal"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by AI Agent": {
+      "main": [
+        [
+          {
+            "node": "IF - Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Needs Review": {
+      "main": [
+        [
+          {
+            "node": "Return Blocked - Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate Meeting Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Meeting Time": {
+      "main": [
+        [
+          {
+            "node": "IF - Time Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Time Valid": {
+      "main": [
+        [
+          {
+            "node": "Create Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Blocked - Invalid Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Meeting": {
+      "main": [
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "fc394bea-2456-48fc-b9be-1090aa57ef7f",
+  "meta": {
+    "instanceId": "22a94396d635bdc18c036410c0b06da7851292b894f2255bca52f69454134ddc"
+  },
+  "nodeGroups": [],
+  "id": "Hr9AQ2rBOA1jj5R7",
+  "tags": []
+}

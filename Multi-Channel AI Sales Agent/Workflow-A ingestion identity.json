@@ -1,0 +1,2328 @@
+{
+  "name": "Workflow-A ingestion identity",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow A — Ingestion & Identity\n\nFour channel entry points normalize to one common schema, then resolve identity against HubSpot:\nphone match → volunteered email in message → (if still unresolved) proceed with reply, explicit ask deferred to meeting/quote step in Workflow B → on eventual email match, check phone conflict before merging.\n\nOutput of this workflow is the contract Workflow B consumes. Do not change field names below without updating B.",
+        "height": 220,
+        "width": 460
+      },
+      "name": "Sticky - Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        80
+      ],
+      "id": "3d9acfb4-e1a0-4609-9462-5efc35528640"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webchat-inbound",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Web Chat Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        112
+      ],
+      "id": "34c1e293-2b6b-4eee-ba1a-79e8ef581478",
+      "webhookId": "14bd164a-2e3f-4749-9dcc-86a0bb49a475"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "readStatus": "unread"
+        },
+        "options": {}
+      },
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        272
+      ],
+      "id": "662ce018-88fd-4fb6-bc92-7ae3bd88de20",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "5VgA7Z0GSVYoraL1",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twilio-sms-inbound",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "name": "Twilio SMS Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        496
+      ],
+      "id": "d29e516c-d673-443c-bd1c-637d3a0e0acc",
+      "webhookId": "98c11d78-a65a-401a-b584-55f71b09f059"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Web Chat payload to the common schema\nconst body = $input.item.json.body || $input.item.json;\nreturn {\n  json: {\n    channel: 'webchat',\n    external_id: body.session_id || body.visitor_id || null, // may be null until email/phone captured mid-conversation\n    contact_name: body.name || null,\n    contact_email: body.email || null,\n    contact_phone: body.phone || null,\n    message_text: body.message || '',\n    thread_id: body.session_id,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "name": "Normalize - Web Chat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        112
+      ],
+      "id": "02ee964e-d777-4bc7-9b07-43a22c5c0d71"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize inbound Gmail message to the common schema\nconst item = $input.item.json;\nlet fromHeader = item.from;\nif (fromHeader && typeof fromHeader === 'object') {\n  fromHeader = fromHeader.value?.[0]?.address || fromHeader.text || '';\n}\nfromHeader = fromHeader || '';\nconst emailMatch = fromHeader.match(/[\\w.+-]+@[\\w-]+\\.[\\w.-]+/);\n\nreturn {\n  json: {\n    channel: 'email',\n    external_id: emailMatch ? emailMatch[0].toLowerCase() : null,\n    contact_name: item.from?.value?.[0]?.name || null,\n    contact_email: emailMatch ? emailMatch[0].toLowerCase() : null,\n    contact_phone: null,\n    message_text: item.text || '',\n    thread_id: item.threadId,\n    email_timestamp: item.date,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "name": "Normalize - Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        272
+      ],
+      "id": "8e4a6a80-fe52-451b-ace0-97db48b9bbad"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize inbound Twilio SMS payload to the common schema\n// Twilio sends application/x-www-form-urlencoded; n8n parses into body\nconst body = $input.item.json.body || $input.item.json;\nconst message = body.Body || body.chatInput || '';\n\nfunction toE164(num) {\n  if (!num) return null;\n  const digits = num.replace(/\\D/g, '').slice(-10);\n  return digits.length === 10 ? '+92' + digits : null;\n}\nreturn {\n  json: {\n    channel: 'sms',\n    external_id: toE164(body.From),\n    contact_name: null,\n    contact_email: null,\n    contact_phone: toE164(body.From),\n    message_text: message,\n    thread_id: body.From || body.sessionId,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "name": "Normalize - SMS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        480
+      ],
+      "id": "69de8fde-8baa-47e6-860d-0eb548befb12"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize inbound WhatsApp Business Cloud payload to the common schema\nconst body = $input.item.json.body || $input.item.json;\nfunction toE164(num) {\n  if (!num) return null;\n  const digits = num.replace(/\\D/g, '').slice(-10);\n  return digits.length === 10 ? '+92' + digits : null;\n}\ntry {\n  const entry = body.entry[0].changes[0].value;\n  const msg = entry.messages[0];\n  const contact = entry.contacts[0];\n  return {\n    json: {\n      channel: 'whatsapp',\n      phone_number_id: entry.metadata.phone_number_id,\n      external_id: toE164(msg.from),\n      contact_name: contact.profile.name || null,\n      contact_email: null,\n      contact_phone: toE164(msg.from),\n      message_text: msg.text ? msg.text.body : '',\n      thread_id: msg.from,\n      timestamp: new Date().toISOString()\n    }\n  };\n} catch (e) {\n  // Malformed/unexpected payload shape (e.g. a status callback, not a message) — fail loudly, don't guess (Rule 5)\n  return { json: { channel: 'whatsapp', error: 'unrecognized_payload_shape', raw: body } };\n}"
+      },
+      "name": "Normalize - WhatsApp",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        784
+      ],
+      "id": "ff3eb01a-ed12-4f22-9926-553581e1b9fd"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Guard: drop malformed WhatsApp events before they hit identity resolution\nif ($input.item.json.error) {\n  throw new Error('Normalize - WhatsApp: ' + $input.item.json.error);\n}\nreturn $input.item;"
+      },
+      "name": "Guard - Drop Malformed WhatsApp",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        624
+      ],
+      "id": "51a460cc-a0de-4d7a-90d2-8aa79ecfd9fa",
+      "notes": "Explicit fail-loud per Rule 5 instead of silently passing a broken payload downstream."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  filterGroups: [\n    { filters: [ { propertyName: \"phone\", operator: \"EQ\", value: $json[\"contact_phone\"] } ] }\n  ],\n  properties: [\"email\", \"phone\", \"firstname\", \"lastname\", \"web_session_id\"]\n}) }}",
+        "options": {}
+      },
+      "name": "HubSpot - Search by Phone",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1584,
+        368
+      ],
+      "id": "94efceec-3901-49d7-ae49-59a867db7655",
+      "alwaysOutputData": false,
+      "credentials": {
+        "hubspotApi": {
+          "id": "dMkQdoZE7kqrXNe8",
+          "name": "HubSpot account"
+        },
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        }
+      },
+      "notes": "Using HTTP Request against the CRM Search API (not the native HubSpot node) because the native node's contact search doesn't support arbitrary property filters — the search API does. This is the one deliberate non-default node choice worth flagging (Rule 12)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json[\"total\"]}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "id": "34659d3a-de57-4a56-8aa4-c361121bda79"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Phone Match Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        368
+      ],
+      "id": "01d062d9-b258-450c-b535-8da13eaeb408"
+    },
+    {
+      "parameters": {
+        "jsCode": "let full_input;\nconst candidates = [\n  'If Volunteered Phone',\n  'If Phone Present',\n  'Guard - Drop Malformed WhatsApp',\n  'Normalize - Email',\n  'Normalize - Web Chat'\n];\nfor (const name of candidates) {\n  try {\n    full_input = $(name).item.json;\n    break;\n  } catch (e) { /* not in this item's lineage, try next */ }\n}\n\n// Same extraction logic as \"Extract Volunteered Email\" — this path never ran it\n//Extract Email Function:\nfunction extractEmail(text) {\n  if (typeof text !== 'string' || !text.trim()) {\n    return null;\n  }\n  const normalized = text\n    .replace(/[\\u200B-\\u200D\\uFEFF]/g, '')\n    .replace(/\\u00A0/g, ' ');\n  const regex =\n    /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+(?=$|[^A-Za-z0-9])/;\n  const match = normalized.match(regex);\n  if (!match) {\n    return null;\n  }\n  let email = match[0]\n    .trim()\n    .replace(/^[<(\"'`\\[]+/, '')\n    .replace(/[>)\\]}\"'`,;:!?]+$/, '')\n    .toLowerCase();\n  if (!email) {\n    return null;\n  }\n  if (email.length > 254) {\n    return null;\n  }\n  let [localPart, domain] = email.split('@');\n  if (!localPart || !domain) {\n    return null;\n  }\n  // Recover from a run of separator-like dots (e.g. an ellipsis before the real address)\n  if (localPart.includes('..')) {\n    const parts = localPart.split(/\\.{2,}/);\n    localPart = parts[parts.length - 1];\n    if (!localPart) {\n      return null;\n    }\n    email = `${localPart}@${domain}`;\n  }\n  if (localPart.startsWith('.') || localPart.endsWith('.')) {\n    return null;\n  }\n  if (\n    domain.startsWith('.') || domain.endsWith('.') ||\n    domain.startsWith('-') || domain.endsWith('-') ||\n    domain.includes('..')\n  ) {\n    return null;\n  }\n  const labels = domain.split('.');\n  const tld = labels[labels.length - 1];\n  if (!/^[A-Za-z]{2,24}$/.test(tld)) {\n    return null;\n  }\n  return email;\n}\nlet contactEmail = full_input.contact_email;\nif (!contactEmail) {\n  const text = full_input.message_text || '';\n  \n  contactEmail = extractEmail(text);\n} else {\n  contactEmail = contactEmail.toLowerCase();\n}\n\nreturn {\n  json: {\n    ...full_input,\n    contact_email: contactEmail,\n    hubspot_contact_id: $json.results[0].id,\n    resolution_method: 'phone_match',\n    existing_email: $json.results[0].properties.email || null,\n    existing_phone: $json.results[0].properties.phone || null,\n    existing_web_session_id: $json.results[0].properties.web_session_id || null\n    \n  }\n};"
+      },
+      "name": "Set - Resolved via Phone",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2256,
+        352
+      ],
+      "id": "309ce164-b21a-47a0-84e0-fee3613d5109",
+      "notes": "NOTE for review: the source-item reference here needs to point at the actual upstream normalized item for whichever channel triggered this run, not a hardcoded node name. In n8n this is handled by keeping the normalized fields flowing through the HubSpot HTTP node untouched (HTTP Request only appends its own response fields) rather than by an explicit $('NodeName') reference — flagging this as a known rough edge to verify once wired up in the live editor, not something to treat as already correct (Rule 3)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// No phone match — check if the customer volunteered an email in the message text itself\n\n//Extract Email Function:\nfunction extractEmail(text) {\n  if (typeof text !== 'string' || !text.trim()) {\n    return null;\n  }\n  const normalized = text\n    .replace(/[\\u200B-\\u200D\\uFEFF]/g, '')\n    .replace(/\\u00A0/g, ' ');\n  const regex =\n    /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+(?=$|[^A-Za-z0-9])/;\n  const match = normalized.match(regex);\n  if (!match) {\n    return null;\n  }\n  let email = match[0]\n    .trim()\n    .replace(/^[<(\"'`\\[]+/, '')\n    .replace(/[>)\\]}\"'`,;:!?]+$/, '')\n    .toLowerCase();\n  if (!email) {\n    return null;\n  }\n  if (email.length > 254) {\n    return null;\n  }\n  let [localPart, domain] = email.split('@');\n  if (!localPart || !domain) {\n    return null;\n  }\n  // Recover from a run of separator-like dots (e.g. an ellipsis before the real address)\n  if (localPart.includes('..')) {\n    const parts = localPart.split(/\\.{2,}/);\n    localPart = parts[parts.length - 1];\n    if (!localPart) {\n      return null;\n    }\n    email = `${localPart}@${domain}`;\n  }\n  if (localPart.startsWith('.') || localPart.endsWith('.')) {\n    return null;\n  }\n  if (\n    domain.startsWith('.') || domain.endsWith('.') ||\n    domain.startsWith('-') || domain.endsWith('-') ||\n    domain.includes('..')\n  ) {\n    return null;\n  }\n  const labels = domain.split('.');\n  const tld = labels[labels.length - 1];\n  if (!/^[A-Za-z]{2,24}$/.test(tld)) {\n    return null;\n  }\n  return email;\n}\n\n// Get the correct upstream normalized data depending on which route resolved\nlet full_input;\ntry {\n  // Only succeeds if this item traveled the volunteered-phone-extraction route\n  full_input = $('If Volunteered Phone').item.json;\n} catch (e) {\n  // Falls back here if the original transport-level phone existed and was searched directly\n  full_input = $('If Phone Present').item.json;\n}\n\nconst text = full_input.message_text || '';\n\nconst match = text.match(/[\\w.+-]+@[\\w-]+\\.[\\w.-]+/);\n\nif (!full_input.contact_email) {\n  return {\n    json: {\n      ...full_input,\n      contact_email: extractEmail(text) || null } };\n} else {\n  return { json: { ...full_input, contact_email: full_input.contact_email.toLowerCase() } };\n}\n"
+      },
+      "name": "Extract Volunteered Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        768
+      ],
+      "id": "2ffc2c28-8644-4566-8e34-6bbe8fa9f92a"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.contact_email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              },
+              "id": "56e8774c-79a4-483b-bed2-b565fd9af6c6"
+            },
+            {
+              "id": "fdb7836e-d130-4a66-8e54-78cace0a6ac0",
+              "leftValue": "={{ $json.contact_email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "name": "IF - Email Present",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        768
+      ],
+      "id": "2f3bee1b-1efa-4ae3-9750-14ae8a395712"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"filterGroups\": [ { \"filters\": [ { \"propertyName\": \"email\", \"operator\": \"EQ\", \"value\": $json[\"contact_email\"] } ] } ], \"properties\": [\"email\",\"phone\",\"firstname\",\"lastname\",\"web_session_id\"] } }}",
+        "options": {}
+      },
+      "name": "HubSpot - Search by Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2224,
+        608
+      ],
+      "id": "ec81fa8d-943a-44b6-84cf-b3ea28cbda77",
+      "alwaysOutputData": false,
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json[\"total\"]}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "id": "5b96dc0d-4859-46a3-bf96-ef55a2561807"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Email Match Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2416,
+        560
+      ],
+      "id": "9389deb0-4473-4ced-a9ce-37233d61102d"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Email matched an existing contact — check for a phone conflict before merging (agreed logic)\n\nlet full_input;\ntry {\n  full_input = $('Extract Volunteered Email').item.json;\n} catch (e) {\n  full_input = $('If Phone Present').item.json;\n}\n\nconst existingPhone = $json.results[0].properties.phone || null;\nconst incomingPhone = full_input.contact_phone || null;\n// 1. A true conflict only happens if BOTH exist and they do not match\nconst conflict = !!(existingPhone && incomingPhone && existingPhone !== incomingPhone);\n// 2. Determine if it is safe to update (only update if incoming data actually exists)\nconst shouldUpdatePhone = !!incomingPhone && !existingPhone; // only true when there's nothing to conflict with\n\nreturn {\n  json: {\n    ...full_input,\n    hubspot_contact_id: $json.results[0].id,\n    resolution_method: 'email_match',\n    phone_conflict: conflict,\n    should_update_phone: shouldUpdatePhone,\n    existing_web_session_id: $json.results[0].properties.web_session_id || null\n  }\n};\n"
+      },
+      "name": "Check Phone Conflict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        480
+      ],
+      "id": "61ae33d4-dc05-4288-862a-c389ff7c3d10"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: {\n    hs_note_body: \"Identity conflict flagged: incoming phone did not match existing contact's phone on record for a phone-matched conversation. Needs manual review.\",\n    hs_timestamp: Date.now()\n  },\n  associations: [\n    {\n      to: { id: $json[\"hubspot_contact_id\"] },\n      types: [ { associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 } ]\n    }\n  ]\n}) }}",
+        "options": {}
+      },
+      "name": "Flag for Manual Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3456,
+        624
+      ],
+      "id": "d2172cdb-6016-46b8-ad56-e669557b7bf5",
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "notes": "incoming phone did not match the existing contact's phone on record. Needs manual review."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{$json[\"hubspot_contact_id\"]}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"properties\": { \"phone\": $json[\"contact_phone\"] } } }}",
+        "options": {}
+      },
+      "name": "Update Contact - Add Phone",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3552,
+        800
+      ],
+      "id": "1b2b1257-b44b-4c2f-a76c-80590a22e1b5",
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (function() {\n  let full_input;\n  const candidates = ['Extract Volunteered Email', 'Extract Volunteered Phone', 'If Phone Present'];\n  for (const name of candidates) {\n    try { full_input = $(name).item.json; break; } catch (e) {}\n  }\n  return JSON.stringify({\n    properties: {\n      email: full_input.contact_email || null,\n      phone: full_input.contact_phone || null,\n      firstname: full_input.contact_name || '',\n      ...(full_input.channel === 'webchat' ? { web_session_id: full_input.thread_id } : {})\n    }\n  });\n})() }}",
+        "options": {}
+      },
+      "name": "Create New Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3184,
+        1216
+      ],
+      "id": "0e237e8d-03b5-468e-bb20-39ba855e339c",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "notes": "Reached both when no email was found in the message (create with phone only) and when volunteered email search found no match (create with both). Contact created with whatever identifiers are actually available — creation is never blocked on having both (matches the agreed no-hard-gate decision)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (function() {\n  let contactId;\n  try { contactId = $('HubSpot - Search by Phone').item.json.results[0].id; } catch (e) {}\n  if (!contactId) { try { contactId = $('HubSpot - Search by Email').item.json.results[0].id; } catch (e) {} }\n  if (!contactId) { try { contactId = $('Set - Resolved via Session').item.json.hubspot_contact_id; } catch (e) {} }\n  if (!contactId) { try { contactId = $('Create New Contact').item.json.id; } catch (e) {} }\n  return JSON.stringify({\n    properties: {\n      hs_note_body: '[' + $('If Phone Present').item.json.channel + '] ' + $('If Phone Present').item.json.message_text,\n      hs_timestamp: Date.now()\n    },\n    associations: [\n      { to: { id: contactId }, types: [ { associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 } ] }\n    ]\n  });\n})() }}",
+        "options": {}
+      },
+      "name": "Log Engagement to HubSpot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4384,
+        656
+      ],
+      "id": "29a8f613-73d6-4397-9e9d-d37adf182fd2",
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "notes": "This IS the conversation-memory mechanism (Design step 3) and the audit log (Rule 6) in one write — no separate logging system needed."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final handoff shape for Workflow B — this is the data contract, don't change field names without updating B\nconst data = $input.item.json;\nreturn{\n  json: {\n    channel: data.channel,\n    hubspot_contact_id: data.hubspot_contact_id,\n    message_text: data.message_text,\n    phone_number_id: data.phone_number_id,\n    thread_id: data.thread_id,\n    resolution_method: data.resolution_method,\n    needs_review: !!data.phone_conflict }\n};"
+      },
+      "name": "Set - Handoff to Workflow B",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4864,
+        656
+      ],
+      "id": "70bd2104-73e5-4909-9580-bb6987c0c950"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "43d8e3db-d43b-45f8-8ee1-dd759bb9af38",
+              "leftValue": "={{ $json.contact_phone }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1168,
+        384
+      ],
+      "id": "e3a3bace-544c-42e4-89e7-9e25c4e684bd",
+      "name": "If Phone Present"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.item.json;\nlet phone = input.contact_phone;\nconst message = input.message_text;\n\nfunction toE164(num) {\n  if (!num) return null;\n  const digits = num.replace(/\\D/g, '').slice(-10);\n  return digits.length === 10 ? '+92' + digits : null;\n}\n\n//Extract Phone number from message boday if present\nfunction extractPhoneNumber(messageBody) {\n  if (!messageBody) return null;\n\n  // 1. Matches common phone formats (7 to 15 digits, handles +, -, spaces, and brackets)\n  const phoneRegex = /(?:\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4,6}/g;\n  \n  const match = messageBody.match(phoneRegex);\n\n  if (match) {\n    // 2. Take the first match and strip out spaces, dashes, and brackets\n    // Keeps the leading '+' if present for international numbers\n    const cleanPhone = match[0].replace(/[^\\d+]/g, '');\n    return cleanPhone;\n  }\n\n  return null; // Return null if no phone number is found\n}\nif (phone === null){\n  phone = extractPhoneNumber(message);\n}\nphone = toE164(phone);\n\nreturn {\n  json: {\n\n    ...input,\n    contact_phone: phone\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        608
+      ],
+      "id": "bd0e4bf6-883e-4000-8c0d-79ca5fe8d360",
+      "name": "Extract Volunteered Phone"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ca69ec60-1bd8-44df-b1cf-81098fb283f4",
+              "leftValue": "={{ $json.contact_phone }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        608
+      ],
+      "id": "cab95671-a86e-4a08-90d0-c5ddaefb74ff",
+      "name": "If Volunteered Phone"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json[\"existing_email\"]}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "id": "4fc67888-27a1-455d-8a20-1f87ca5e8e3e"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Existing Email Present",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        240
+      ],
+      "id": "ca8c4c7e-1c8a-44fc-bdc1-f079534f522f"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json[\"contact_email\"]}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "id": "c9c8aca1-18cf-499c-80e8-8d7da1ec9709"
+            },
+            {
+              "leftValue": "={{$json[\"existing_email\"]}}",
+              "rightValue": "={{$json[\"contact_email\"]}}",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              },
+              "id": "0b8daaab-c213-4aa1-ad46-f87b52a2c3ff"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Email Conflict",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3040,
+        -64
+      ],
+      "id": "fc6be2b1-8def-4801-bd39-c37a2d3d757b",
+      "notes": "True only when BOTH: a new email was given/extracted this turn AND it differs from what's on file. If no new email was given this turn, contact_email is empty and this correctly falls to false — no conflict, nothing to do, just an existing email with no new info."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: {\n    hs_note_body: \"Email conflict flagged: contact record has '\" + $json[\"existing_email\"] + \"' on file, but a different email ('\" + $json[\"contact_email\"] + \"') was provided in this conversation. Needs manual review before updating.\",\n    hs_timestamp: Date.now()\n  },\n  associations: [\n    {\n      to: { id: $json[\"hubspot_contact_id\"] },\n      types: [ { associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 } ]\n    }\n  ]\n}) }}",
+        "options": {}
+      },
+      "name": "Flag Email Conflict for Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3360,
+        -128
+      ],
+      "id": "d1bed5db-d30f-4dde-a201-25630055c458",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "notes": "Per Rule 5: don't silently overwrite an existing email — people do sometimes deliberately switch, but this could also be a typo or a shared phone. Flag, don't guess."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json[\"contact_email\"]}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "id": "b989805d-411c-4870-b4d4-6c2576d54c02"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - New Email Given",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2896,
+        240
+      ],
+      "id": "8dc8c874-8f53-4e35-9653-a0bce3881f57",
+      "notes": "Reached only when existing_email was empty — checks whether this turn actually supplied one to add."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{$json[\"hubspot_contact_id\"]}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { email: $json[\"contact_email\"] } }) }}",
+        "options": {}
+      },
+      "name": "Update Contact - Add Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3056,
+        112
+      ],
+      "id": "d36f76ad-b27e-4274-83eb-a672e2788bac",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e45e0cd8-2cd2-4909-bd65-13ba9d79d925",
+              "leftValue": "={{$json.phone_conflict}}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3168,
+        752
+      ],
+      "id": "cdfaaa9c-18e4-42ea-b373-7bc527e7cd7c",
+      "name": "If A - IF Has Phone Conflict"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.should_update_phone}}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "03b9b833-ae14-4dc9-96c4-7b2d22be186c"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF-B IF Should Update Phone",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        992
+      ],
+      "id": "b850084c-07b0-441e-bb4d-7c4a7ab4205e"
+    },
+    {
+      "parameters": {
+        "jsCode": "let contactId, resolutionMethod;\ntry {\n  contactId = $('Set - Resolved via Phone').first().json.hubspot_contact_id;\n  resolutionMethod = 'phone_match';\n} catch (e) {\n  try {\n    contactId = $('Check Phone Conflict').first().json.hubspot_contact_id;\n    resolutionMethod = 'email_match';\n  } catch (e2) {\n    try {\n      contactId = $('Set - Resolved via Session').first().json.hubspot_contact_id;\n      resolutionMethod = 'session_match';\n    } catch (e3) {\n      try {\n        contactId = $('Create New Contact').first().json.id;\n        resolutionMethod = 'new_contact';\n      } catch (e4) {\n        contactId = null;\n        resolutionMethod = 'unknown';\n      }\n    }\n  }\n}\nconst anchor = $('If Phone Present').item.json;\nreturn {\n  json: {\n    hubspot_contact_id: contactId,\n    channel: anchor.channel,\n    message_text: anchor.message_text,\n    phone_number_id: anchor.phone_number_id || null,\n    thread_id: anchor.thread_id,\n    resolution_method: resolutionMethod,\n    phone_conflict: $json.phone_conflict || false\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4640,
+        656
+      ],
+      "id": "a810f2b7-95c9-476c-8123-cbb35a83616f",
+      "name": "Recover Data for Logging"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "cilmio5fYCqscElg",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/cilmio5fYCqscElg",
+          "cachedResultName": "Workflow B - Agent Core (Slice 1: History + Knowledge Retrieval only)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "needs_review": "={{ $json.needs_review }}",
+            "channel": "={{ $json.channel }}",
+            "hubspot_contact_id": "={{ $json.hubspot_contact_id }}",
+            "message_text": "={{ $json.message_text }}",
+            "thread_id": "={{ $json.thread_id }}",
+            "resolution_method": "={{ $json.resolution_method }}",
+            "phone_number_id": "={{ $json.phone_number_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "hubspot_contact_id",
+              "displayName": "hubspot_contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "message_text",
+              "displayName": "message_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "resolution_method",
+              "displayName": "resolution_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "needs_review",
+              "displayName": "needs_review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "boolean",
+              "removed": false
+            },
+            {
+              "id": "phone_number_id",
+              "displayName": "phone_number_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5072,
+        656
+      ],
+      "id": "248981de-47ba-4e96-a9e1-9d0dcd4e8e82",
+      "name": "Call 'Workflow B - Agent Core (Slice 1: History + Knowledge Retrieval only)'"
+    },
+    {
+      "parameters": {
+        "multipleMethods": true,
+        "path": "whatsapp-inbound-message",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "name": "WhatsApp Webhook Trigger1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        800
+      ],
+      "id": "86c729d2-270f-4256-9836-d1ae7466e796",
+      "webhookId": "7c083ed4-c90e-4464-870c-6a713fbc1c8f",
+      "notes": "Meta requires the same URL to answer a GET verification challenge (hub.challenge) AND receive POST messages. Branch below splits these two cases — this is non-obvious and worth flagging (Rule 12)."
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{$json[\"query\"][\"hub.challenge\"]}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "name": "Respond - Verification Challenge1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        224,
+        1008
+      ],
+      "id": "77749cc2-e964-4cc0-872d-6a3b482370b3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const authToken = $env.TWILIO_AUTH_TOKEN;\nconst crypto = require('crypto');\nlet valid = false;\ntry {\n  const rawBody = Buffer.from($input.item.binary.data.data, 'base64').toString('utf-8');\n  const expectedSignature = 'sha256=' + crypto.createHmac('sha256', authToken).update(rawBody).digest('hex');\n  const receivedSignature = $json.headers['x-hub-signature-256'];\n  valid = expectedSignature === receivedSignature;\n} catch (e) {\n  // No raw body present, or malformed request — treat as invalid rather than crashing.\n  valid = false;\n}\n\nreturn { json: { ...$json, signature_valid: valid } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        496
+      ],
+      "id": "93199e2f-235e-4e46-8f64-1b8c340468bc",
+      "name": "Twilio signature validation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst appSecret = $env.META_APP_SECRET;\n\nlet valid = false;\ntry {\n  const rawBody = Buffer.from($input.item.binary.data.data, 'base64').toString('utf-8');\n  const expectedSignature = 'sha256=' + crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex');\n  const receivedSignature = $json.headers['x-hub-signature-256'];\n  valid = expectedSignature === receivedSignature;\n} catch (e) {\n  // No raw body present, or malformed request — treat as invalid rather than crashing.\n  valid = false;\n}\n\nreturn { json: { ...$json, signature_valid: valid } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        800
+      ],
+      "id": "be6c5e75-5242-4248-961f-17e180e148fa",
+      "name": "WhatsApp signature validation"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        640,
+        1008
+      ],
+      "id": "1aae6995-21d1-422c-8ceb-3694c57090db",
+      "name": "Plain Rejection WhatsApp"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        544,
+        624
+      ],
+      "id": "01cca7db-5edb-417e-9805-620aed70dca3",
+      "name": "Plain Rejection Twilio"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.reply }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        5280,
+        656
+      ],
+      "id": "d7bbafb3-205b-40ab-8ad1-05a26b7ae9ac",
+      "name": "Respond to Web Chat"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cd391b07-bf36-4a61-b0f9-d1f17cdcb47c",
+              "leftValue": "={{ $json.total }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2800,
+        1008
+      ],
+      "id": "ab87a24f-acaa-438e-973c-a75824d2c62b",
+      "name": "IF - Session Match Found"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nlet full_input;\ntry { full_input = $('Extract Volunteered Email').item.json; }\ncatch (e) { full_input = $('If Phone Present').item.json; }\n\nreturn {\n  json: {\n    ...full_input,\n    hubspot_contact_id: $json.results[0].id,\n    resolution_method: 'session_match',\n    existing_email: $json.results[0].properties.email || null,\n    existing_phone: $json.results[0].properties.phone || null,\n    contact_name:full_input.contact_name,\n    contact_email: full_input.contact_email,\n    contact_phone: full_input.contact_phone\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2944,
+        736
+      ],
+      "id": "b81ef9ca-f780-4753-8fd9-bbbad909e9c7",
+      "name": "Set - Resolved via Session"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  filterGroups: [{ filters: [{ propertyName: \"web_session_id\", operator: \"EQ\", value: $('If Phone Present').item.json.thread_id }] }],\n  properties: [\"email\", \"phone\", \"firstname\", \"web_session_id\"]\n}) }}",
+        "options": {}
+      },
+      "name": "HubSpot - Search by Session ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2608,
+        1008
+      ],
+      "id": "33f41064-eaab-4eff-9ab5-c43f8b7cc6be",
+      "alwaysOutputData": false,
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        }
+      },
+      "notes": "Using HTTP Request against the CRM Search API (not the native HubSpot node) because the native node's contact search doesn't support arbitrary property filters — the search API does. This is the one deliberate non-default node choice worth flagging (Rule 12)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "76d59892-bf99-4353-8ca0-1282de646607",
+              "leftValue": "={{ $('If Phone Present').item.json.channel }}",
+              "rightValue": "email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1616,
+        624
+      ],
+      "id": "148faeab-1153-47bc-8235-46d84b0afd33",
+      "name": "If Channel is Email"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a7f7f348-ab0d-420d-bf70-2dad3429fc63",
+              "leftValue": "={{ $('If Phone Present').item.json.channel }}",
+              "rightValue": "webchat",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2416,
+        1200
+      ],
+      "id": "da9aeab9-663b-4c58-a3f0-540fe9a3e189",
+      "name": "IF Channel Web Chat"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f404cf77-9bc5-409c-afcb-c5bf863d0ad0",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "webchat",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "c46214bc-00e1-4494-9eef-82a93ed7423a",
+              "leftValue": "={{ $json.existing_web_session_id }}",
+              "rightValue": "={{ $json.thread_id }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2576,
+        0
+      ],
+      "id": "7d1a3af3-7050-4965-9dd3-3f67ff6b3a35",
+      "name": "IF - Session ID Stale-1"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.hubspot_contact_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { web_session_id: $json.thread_id } }) }}",
+        "options": {}
+      },
+      "name": "Update Stale Session ID-1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3296,
+        -272
+      ],
+      "id": "696cb40d-cad6-4e9a-ae82-7a1e2c7bc526",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.hubspot_contact_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { web_session_id: $json.thread_id } }) }}",
+        "options": {}
+      },
+      "name": "Update Stale Session ID-2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3200,
+        496
+      ],
+      "id": "f886eca8-67e8-4a3c-82bd-ff914f151e62",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f404cf77-9bc5-409c-afcb-c5bf863d0ad0",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "webchat",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "c46214bc-00e1-4494-9eef-82a93ed7423a",
+              "leftValue": "={{ $json.existing_web_session_id }}",
+              "rightValue": "={{ $json.thread_id }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2928,
+        544
+      ],
+      "id": "eefd0586-19dd-4b88-8429-e3ad0c1320e7",
+      "name": "IF - Session ID Stale-2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d5a3ad97-465e-429d-9a34-e7f6fe251e04",
+              "leftValue": "={{ $('IF - Existing Email Present').item.json.existing_phone }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3408,
+        128
+      ],
+      "id": "b1fafb5f-ca40-4b3e-ae66-90812c83cd6e",
+      "name": "IF - Existing Phone Present (Session)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a4a7d65c-3703-432e-a7e9-763d5757cce5",
+              "leftValue": "={{ $('IF - Existing Email Present').item.json.contact_phone }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "7deb0b5a-2c31-4e7c-a153-01028b088d71",
+              "leftValue": "={{ $('IF - Existing Email Present').item.json.existing_phone }}",
+              "rightValue": "={{ $('IF - Existing Email Present').item.json.contact_phone }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3616,
+        96
+      ],
+      "id": "4a3a8895-a437-485d-b30e-23d6761f9a67",
+      "name": "IF - Phone Conflict (Session)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7043422c-40ce-41c2-9be3-ea3b143793cb",
+              "leftValue": "={{$('IF - Existing Email Present').item.json.contact_phone}}",
+              "rightValue": "=",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3408,
+        352
+      ],
+      "id": "fae594c1-166c-4cdf-bf64-b10e5198cb5e",
+      "name": "IF - New Phone Given (Session)1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: {\n    hs_note_body: \"Phone conflict flagged: contact record has '\" + $('IF - Existing Email Present').item.json.existing_phone + \"' on file, but a different phone ('\" + $('IF - Existing Email Present').item.json.contact_phone + \"') was provided in this conversation. Needs manual review before updating.\",\n    hs_timestamp: Date.now()\n  },\n  associations: [\n    {\n      to: { id: $('IF - Existing Email Present').item.json.hubspot_contact_id },\n      types: [ { associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 } ]\n    }\n  ]\n}) }}",
+        "options": {}
+      },
+      "name": "Flag Phone Conflict for Review (Session)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4032,
+        144
+      ],
+      "id": "781b47c9-32e4-496e-81ab-49a6b4267a13",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "notes": "Per Rule 5: don't silently overwrite an existing email — people do sometimes deliberately switch, but this could also be a typo or a shared phone. Flag, don't guess."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ad3c56c8-c3a6-40c1-88a0-8253272c4730",
+              "leftValue": "={{ $json.signature_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        400,
+        800
+      ],
+      "id": "b6ca1a00-2e5b-4dbd-b4b5-5ffa39f82b53",
+      "name": "If Signature Valid WhatsApp"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fdaa598d-cee3-4822-9bb0-f3e544f45d3f",
+              "leftValue": "={{ $json.signature_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        336,
+        496
+      ],
+      "id": "8c299bb1-a677-48a3-91d8-00fa6e3b0c36",
+      "name": "Is Signature Valid Twilio"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{$json[\"hubspot_contact_id\"]}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"properties\": { \"phone\": $('IF - Existing Email Present').item.json.contact_phone } } }}",
+        "options": {}
+      },
+      "name": "Update Contact - Add Phone (Session)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3648,
+        288
+      ],
+      "id": "a095f760-1d53-458c-89b9-9141a5d2614b",
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b305f0b9-94ec-4fc4-97d3-e2baabcca9c4",
+              "name": "contact_email",
+              "value": "={{$('If Phone Present').item.json.contact_email}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1872,
+        608
+      ],
+      "id": "883bdd46-bca2-46b3-b24e-54a1c3967919",
+      "name": "contact_email Set Field"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Web Chat Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize - Web Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize - Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twilio SMS Trigger": {
+      "main": [
+        [
+          {
+            "node": "Twilio signature validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize - WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Guard - Drop Malformed WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize - Web Chat": {
+      "main": [
+        [
+          {
+            "node": "If Phone Present",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize - Email": {
+      "main": [
+        [
+          {
+            "node": "If Phone Present",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize - SMS": {
+      "main": [
+        [
+          {
+            "node": "If Phone Present",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard - Drop Malformed WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "If Phone Present",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot - Search by Phone": {
+      "main": [
+        [
+          {
+            "node": "IF - Phone Match Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Phone Match Found": {
+      "main": [
+        [
+          {
+            "node": "Set - Resolved via Phone",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Channel is Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Resolved via Phone": {
+      "main": [
+        [
+          {
+            "node": "IF - Session ID Stale-1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Volunteered Email": {
+      "main": [
+        [
+          {
+            "node": "IF - Email Present",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Email Present": {
+      "main": [
+        [
+          {
+            "node": "HubSpot - Search by Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Channel Web Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot - Search by Email": {
+      "main": [
+        [
+          {
+            "node": "IF - Email Match Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Email Match Found": {
+      "main": [
+        [
+          {
+            "node": "Check Phone Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Channel Web Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Phone Conflict": {
+      "main": [
+        [
+          {
+            "node": "IF - Session ID Stale-2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag for Manual Review": {
+      "main": [
+        [
+          {
+            "node": "Log Engagement to HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Contact - Add Phone": {
+      "main": [
+        [
+          {
+            "node": "Log Engagement to HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create New Contact": {
+      "main": [
+        [
+          {
+            "node": "Log Engagement to HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Engagement to HubSpot": {
+      "main": [
+        [
+          {
+            "node": "Recover Data for Logging",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Phone Present": {
+      "main": [
+        [
+          {
+            "node": "HubSpot - Search by Phone",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Volunteered Phone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Volunteered Phone": {
+      "main": [
+        [
+          {
+            "node": "If Volunteered Phone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Volunteered Phone": {
+      "main": [
+        [
+          {
+            "node": "HubSpot - Search by Phone",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Channel is Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Existing Email Present": {
+      "main": [
+        [
+          {
+            "node": "IF - Email Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - New Email Given",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Email Conflict": {
+      "main": [
+        [
+          {
+            "node": "Flag Email Conflict for Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Existing Phone Present (Session)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - New Email Given": {
+      "main": [
+        [
+          {
+            "node": "Update Contact - Add Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Existing Phone Present (Session)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag Email Conflict for Review": {
+      "main": [
+        [
+          {
+            "node": "IF - Existing Phone Present (Session)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Contact - Add Email": {
+      "main": [
+        [
+          {
+            "node": "IF - Existing Phone Present (Session)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF-B IF Should Update Phone": {
+      "main": [
+        [
+          {
+            "node": "Update Contact - Add Phone",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Engagement to HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If A - IF Has Phone Conflict": {
+      "main": [
+        [
+          {
+            "node": "Flag for Manual Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF-B IF Should Update Phone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recover Data for Logging": {
+      "main": [
+        [
+          {
+            "node": "Set - Handoff to Workflow B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Handoff to Workflow B": {
+      "main": [
+        [
+          {
+            "node": "Call 'Workflow B - Agent Core (Slice 1: History + Knowledge Retrieval only)'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Webhook Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Respond - Verification Challenge1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WhatsApp signature validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twilio signature validation": {
+      "main": [
+        [
+          {
+            "node": "Is Signature Valid Twilio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp signature validation": {
+      "main": [
+        [
+          {
+            "node": "If Signature Valid WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Workflow B - Agent Core (Slice 1: History + Knowledge Retrieval only)'": {
+      "main": [
+        [
+          {
+            "node": "Respond to Web Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Session Match Found": {
+      "main": [
+        [
+          {
+            "node": "Set - Resolved via Session",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create New Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot - Search by Session ID": {
+      "main": [
+        [
+          {
+            "node": "IF - Session Match Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Resolved via Session": {
+      "main": [
+        [
+          {
+            "node": "IF - Existing Email Present",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Channel is Email": {
+      "main": [
+        [
+          {
+            "node": "contact_email Set Field",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Volunteered Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Channel Web Chat": {
+      "main": [
+        [
+          {
+            "node": "HubSpot - Search by Session ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create New Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Session ID Stale-1": {
+      "main": [
+        [
+          {
+            "node": "Update Stale Session ID-1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Existing Email Present",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Session ID Stale-2": {
+      "main": [
+        [
+          {
+            "node": "Update Stale Session ID-2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If A - IF Has Phone Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Stale Session ID-1": {
+      "main": [
+        [
+          {
+            "node": "Log Engagement to HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Stale Session ID-2": {
+      "main": [
+        [
+          {
+            "node": "Log Engagement to HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Existing Phone Present (Session)": {
+      "main": [
+        [
+          {
+            "node": "IF - Phone Conflict (Session)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - New Phone Given (Session)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Phone Conflict (Session)": {
+      "main": [
+        [
+          {
+            "node": "Flag Phone Conflict for Review (Session)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Engagement to HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - New Phone Given (Session)1": {
+      "main": [
+        [
+          {
+            "node": "Update Contact - Add Phone (Session)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Engagement to HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag Phone Conflict for Review (Session)": {
+      "main": [
+        [
+          {
+            "node": "Log Engagement to HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Signature Valid WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Normalize - WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plain Rejection WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Signature Valid Twilio": {
+      "main": [
+        [
+          {
+            "node": "Normalize - SMS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plain Rejection Twilio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Contact - Add Phone (Session)": {
+      "main": [
+        [
+          {
+            "node": "Log Engagement to HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "contact_email Set Field": {
+      "main": [
+        [
+          {
+            "node": "HubSpot - Search by Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "036aaf60-add8-48ba-9487-8ca58a6360c2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "22a94396d635bdc18c036410c0b06da7851292b894f2255bca52f69454134ddc"
+  },
+  "nodeGroups": [],
+  "id": "PwpldzDl7FGEsnlw",
+  "tags": []
+}

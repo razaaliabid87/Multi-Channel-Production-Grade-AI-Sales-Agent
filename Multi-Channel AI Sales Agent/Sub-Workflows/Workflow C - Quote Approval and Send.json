@@ -1,0 +1,840 @@
+{
+  "name": "Workflow C - Quote Approval and Send",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow C — Approval & Send\n\nTriggered by a rep opening the Form link from the Slack notification (sent by Tool - Request Quote Draft). deal_id, contact_id, and package_name arrive as hidden fields prefilled from the link's query parameters — VERIFY this hidden-field-from-query-param behavior in your live n8n editor before trusting it (Rule 3); this is a newer Form node capability worth confirming against your version.\n\nSends a plain email, not a native HubSpot Quote — deliberate simplification per the project decision (native Quotes need a Products library + Quote template not yet configured in HubSpot). Upgrade path later: only the 'Send Quote Email' node would need replacing, nothing else in this workflow.",
+        "height": 300,
+        "width": 500
+      },
+      "name": "Sticky - Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1024,
+        -64
+      ],
+      "id": "a0b4a324-9750-4a0d-9290-270474d25270"
+    },
+    {
+      "parameters": {
+        "formTitle": "Quote Approval",
+        "formDescription": "Review the quote request and approve or reject.",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "deal_id",
+              "fieldType": "hiddenField"
+            },
+            {
+              "fieldName": "contact_id",
+              "fieldType": "hiddenField"
+            },
+            {
+              "fieldName": "package_name",
+              "fieldType": "hiddenField"
+            },
+            {
+              "fieldName": "channel",
+              "fieldType": "hiddenField"
+            },
+            {
+              "fieldLabel": "Decision",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Approve"
+                  },
+                  {
+                    "option": "Reject"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Final Price",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Additional Notes to Customer",
+              "fieldType": "textarea"
+            },
+            {
+              "fieldType": "hiddenField"
+            }
+          ]
+        },
+        "options": {
+          "path": "quote-approval"
+        }
+      },
+      "name": "Quote Approval Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        -1024,
+        304
+      ],
+      "webhookId": "1c7cfff8-0c6a-4af2-87a3-03b2bfd3f4a8",
+      "id": "ab55791d-e3dc-4e2a-ace3-dd7ea10e3334",
+      "notes": "This is the form URL referenced in the Slack notification (https://YOUR_N8N_HOST/form/quote-approval). Path must match what Tool - Request Quote Draft's Slack message links to."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json[\"Decision\"]}}",
+              "rightValue": "Approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "id": "03057037-063e-449b-acd2-cc961cde71c2"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Approved",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        304
+      ],
+      "id": "55b9c490-8384-4506-8da7-49258e425810"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { hs_note_body: '[quote rejected] Rep declined the quote request for ' + $json[\"package_name\"] + '. Notes: ' + ($json[\"Additional Notes to Customer\"] || 'none'), hs_timestamp: Date.now() }, associations: [ { to: { id: $json[\"contact_id\"] }, types: [ { associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 } ] } ] }) }}",
+        "options": {}
+      },
+      "name": "Log Rejection Note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -592,
+        496
+      ],
+      "id": "774f02b5-67ab-40f5-a8ab-2b89a8ae9762",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json[\"contact_id\"] }}?properties=email,firstname,phone",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "options": {}
+      },
+      "name": "Fetch Contact Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -592,
+        288
+      ],
+      "id": "2be70099-8053-4268-a165-5d4e6e548a61",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "notes": "Now also fetches phone, so SMS/WhatsApp-originated quotes can be delivered back to the same number, not just email."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Quote Approval Form').item.json[\"channel\"] }}",
+                    "rightValue": "sms",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "12f914b6-0824-4943-95af-3f5184f4f669"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SMS"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Quote Approval Form').item.json[\"channel\"] }}",
+                    "rightValue": "whatsapp",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "65f3abca-0f05-44d3-903a-901d1683f83e"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "WhatsApp"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "name": "Route by Channel",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -384,
+        272
+      ],
+      "id": "c060aa4b-692b-4301-8e17-99fb4d2e9334",
+      "notes": "fallbackOutput 'extra' catches email, webchat, or any other/missing value — all routed to the email path, matching the earlier decision that email is the universal fallback delivery method."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.properties.phone}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Has Phone (SMS)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        144
+      ],
+      "id": "55955b9f-d9ec-406c-b935-2a49094935b9"
+    },
+    {
+      "parameters": {
+        "from": "={{ $credentials.twilioApi.fromNumber }}",
+        "to": "={{ $json.properties.phone }}",
+        "message": "=Hi {{ $json.properties.firstname || 'there' }}! Your quote for {{ $('Quote Approval Form').item.json[\"package_name\"] }}: {{ $('Quote Approval Form').item.json[\"Final Price\"] }}. {{ $('Quote Approval Form').item.json[\"Additional Notes to Customer\"] || '' }}",
+        "options": {}
+      },
+      "name": "Send via Twilio (Quote)",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        144,
+        -128
+      ],
+      "id": "43708ad1-d310-4027-9ea2-5e90b0a6f6e7",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.properties.phone}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "id": "e81c53df-ef4f-4881-98c5-0a570f276562"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Has Phone (WhatsApp)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        288
+      ],
+      "id": "bb1d5ef0-09c4-4cc4-b16f-250821ce274a"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v19.0/1234089126455806/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppBusinessCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $json.properties.phone, type: 'text', text: { body: 'Hi ' + ($json.properties.firstname || 'there') + '! Your quote for ' + $('IF - Approved').item.json[\"package_name\"] + ': ' + $('IF - Approved').item.json[\"Final Price\"] + '. ' + ($('IF - Approved').item.json[\"Additional Notes to Customer\"] || '') } }) }}",
+        "options": {}
+      },
+      "name": "Send via WhatsApp (Quote)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        144,
+        192
+      ],
+      "id": "b9b0dc5a-45f2-488f-bc4a-40753813aa46",
+      "onError": "continueErrorOutput",
+      "notes": "A real, expected failure mode here: Meta's 24-hour customer-service window. If the last customer message was over 24h ago, this free-form send will be rejected — it needs a pre-approved template instead, which isn't set up. Treat a failure here as informative, not necessarily a bug — the Log Send Failure note will surface it for a human to send manually."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.properties.email}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Has Email",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        448
+      ],
+      "id": "a23e4f79-b001-4a45-a66f-226b4652db6d"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.properties.email }}",
+        "subject": "={{ 'Your quote for ' + $('Quote Approval Form').item.json[\"package_name\"] }}",
+        "message": "=Hi {{ $json.properties.firstname || 'there' }},\n\nThanks for your interest in our {{ $('Quote Approval Form').item.json[\"package_name\"] }} package.\n\nHere are the details:\nPrice: {{ $('Quote Approval Form').item.json[\"Final Price\"] }}\n\n{{ $('Quote Approval Form').item.json[\"Additional Notes to Customer\"] || '' }}\n\nLet us know if you have any questions or would like to move forward.\n\nBest regards",
+        "options": {}
+      },
+      "name": "Send Quote Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        144,
+        560
+      ],
+      "id": "56fa1b69-ec0e-45c3-9c63-381807785c01",
+      "webhookId": "b8e77d18-c0e6-4deb-9703-03c8df982065",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "5VgA7Z0GSVYoraL1",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "operation defaults to 'send' (a new email) — deliberately NOT 'reply', since this runs independently of the original conversation's Gmail thread context. This is also the universal fallback for any channel with no better delivery method."
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { send_success: false, send_error: 'No phone number on file for SMS delivery — needs a human to follow up directly.' } };"
+      },
+      "name": "Log No Delivery Method (SMS)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        32
+      ],
+      "id": "6b747697-4c81-4134-b2c7-923900585d54"
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { send_success: false, send_error: 'No phone number on file for WhatsApp delivery — needs a human to follow up directly.' } };"
+      },
+      "name": "Log No Delivery Method (WhatsApp)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        384
+      ],
+      "id": "fb531626-7b2a-4e4c-bf65-56316e5dfd2c"
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { send_success: false, send_error: 'No email on file — could not deliver the quote through any channel. Needs a human to follow up directly.' } };"
+      },
+      "name": "Log No Delivery Method (Email)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        704
+      ],
+      "id": "79e941c3-344b-47c3-b32d-9b29f17175f8"
+    },
+    {
+      "parameters": {
+        "jsCode": "const failed = $json.error !== undefined || $json.send_success === false;\nconst existingError = $json.send_error;\nreturn {\n  json:{\n    send_success: !failed,\n    send_error: failed ? (existingError || String($json.error)) : null\n  }};"
+      },
+      "name": "Normalize Send Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        256
+      ],
+      "id": "4b1abbea-678e-403c-82a8-2dafb058e41c"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.send_success}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "IF - Send Successful",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        800,
+        256
+      ],
+      "id": "2283235b-d2d1-4165-90b8-dd104a10402e"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { hs_note_body: '[quote sent] ' + $('Quote Approval Form').item.json[\"package_name\"] + ' at ' + $('Quote Approval Form').item.json[\"Final Price\"], hs_timestamp: Date.now() }, associations: [ { to: { id: $('Quote Approval Form').item.json[\"contact_id\"] }, types: [ { associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 } ] } ] }) }}",
+        "options": {}
+      },
+      "name": "Log Quote Sent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1040,
+        48
+      ],
+      "id": "12c42ca5-f153-4fd4-86cb-3fe79eb30166",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/deals/{{ $('Quote Approval Form').item.json[\"deal_id\"] }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { dealstage: 'contractsent' } }) }}",
+        "options": {}
+      },
+      "name": "Update Deal Stage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1056,
+        240
+      ],
+      "id": "35bd1e0a-437e-4794-a7ab-5db339d62e92",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "notes": "'contractsent' is HubSpot's default out-of-the-box stage name for the default pipeline — verify this matches your actual pipeline configuration if you've customized stages (Rule 3), same caveat as the Create Deal node in Tool - Request Quote Draft."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { hs_note_body: '[quote send FAILED] Approved quote for ' + $('Quote Approval Form').item.json[\"package_name\"] + ' could not be emailed: ' + $json.send_error, hs_timestamp: Date.now() }, associations: [ { to: { id: $('Quote Approval Form').item.json[\"contact_id\"] }, types: [ { associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 } ] } ] }) }}",
+        "options": {}
+      },
+      "name": "Log Send Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1056,
+        416
+      ],
+      "id": "f95586de-6554-406d-9c47-1165ae9aaa78",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "wH3dot57QAXJEZXJ",
+          "name": "HubSpot Service Key account"
+        },
+        "hubspotOAuth2Api": {
+          "id": "AmLQVsZow0zSr4u4",
+          "name": "HubSpot account"
+        }
+      },
+      "notes": "Approved-but-undelivered is worse than a rejection — this is the case most worth a human noticing quickly, since the customer is now waiting on something that never arrived."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Quote Approval Form": {
+      "main": [
+        [
+          {
+            "node": "IF - Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Approved": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contact Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Rejection Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Contact Details": {
+      "main": [
+        [
+          {
+            "node": "Route by Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Channel": {
+      "main": [
+        [
+          {
+            "node": "IF - Has Phone (SMS)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Has Phone (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Has Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Has Phone (SMS)": {
+      "main": [
+        [
+          {
+            "node": "Send via Twilio (Quote)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log No Delivery Method (SMS)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send via Twilio (Quote)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log No Delivery Method (SMS)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Has Phone (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Send via WhatsApp (Quote)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log No Delivery Method (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send via WhatsApp (Quote)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log No Delivery Method (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Has Email": {
+      "main": [
+        [
+          {
+            "node": "Send Quote Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log No Delivery Method (Email)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Quote Email": {
+      "main": [
+        [
+          {
+            "node": "Normalize Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log No Delivery Method (Email)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Send Result": {
+      "main": [
+        [
+          {
+            "node": "IF - Send Successful",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Send Successful": {
+      "main": [
+        [
+          {
+            "node": "Log Quote Sent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Deal Stage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Send Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "c04c5d98-3f7d-4c3a-987a-50b8b6309ab1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "22a94396d635bdc18c036410c0b06da7851292b894f2255bca52f69454134ddc"
+  },
+  "nodeGroups": [],
+  "id": "R32KPFuOqYRILzoZ",
+  "tags": []
+}
