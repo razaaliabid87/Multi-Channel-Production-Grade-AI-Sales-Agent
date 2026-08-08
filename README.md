@@ -3,12 +3,14 @@
 A Multi-channel AI sales agent (n8n, HubSpot, OpenAI, RAG, Qdrant, Gemini, Slack) that unifies Web Chat, Email, SMS & WhatsApp into one customer identity with full cross-channel conversation memory, every message and reply is logged to HubSpot, with anonymous web-chat visitors tracked via a custom Web Session ID property. Retrieves answers via RAG, books meetings, updates CRM records, replies in the customer's language, and gates every quote behind human approval, with signature-verified inbound webhooks.
 <table>
   <tr>
-    <td><img src="assets/screenshots/slack-channel-notification.png" width="400"></td>
-    <td><img src="assets/screenshots/approval-form.png" width="400"></td>
+    <td>
+      A human is notified in real time the moment a customer requests a quote, nothing moves forward without them.
+      <img src="assets/screenshots/Slack Channel Notification.png" width="400">
+    </td>
+    <td><img src="assets/screenshots/Quote Approval Form.png" width="400"></td>
   </tr>
 </table>
 
-slack-channel-notification.png
 > Full technical documentation — data contracts, node-level behavior, testing status is in
 [`PROJECT_DOCUMENTATION_FULL.md`](./PROJECT_DOCUMENTATION_FULL.md).
 
@@ -49,6 +51,9 @@ Web Chat / Email / SMS / WhatsApp
                           (Slack notification → human review via
                            n8n Form → approved delivery)
 ```
+**Workflow-A ingestion identity Screenshot:**
+*Four channels, one identity: phone, email, and session-based resolution converge into a single HubSpot contact record.*
+<img src="assets/screenshots/Workflow-A ingestion identity SS.png">
 
 **Seven n8n workflows:**
 
@@ -90,7 +95,15 @@ The tool workflows are deliberately independent, callable sub-workflows — reus
 
 **2. Agent Core:**  pulls the last 10 conversation notes for the resolved contact (HubSpot Notes *are* the memory store — no separate database), builds a prompt carrying real-time date/timezone context and the business's own name (pulled from a HubSpot config record, not hardcoded), and hands the conversation to an OpenAI agent with four tools. Two values — `hubspot_contact_id` and `needs_review` — are supplied to every write-capable tool from Workflow B's trusted context, never from the model's own tool-call output, so the model can decide *when* to act but never *whether it's authorized* to.
 
+*For everything short of a quote, the agent answers, updates the CRM, or books a meeting instantly, no human in the loop required.*
+
+<img src="assets/screenshots/AI Agent with Tools & Instant Message Replying when no quote approval needed.png" width="400" height="200">
+
 **3. Quote Approval & Send:**  a quote request never reaches the customer directly. It creates a flagged HubSpot Deal + note, notifies a human via Slack, and only routes delivery back through the customer's original channel once a human has explicitly approved a final price through the form.
+
+*Once approved, delivery routes back through the customer's original channel (SMS, WhatsApp, or email) automatically.*
+
+<img src="assets/screenshots/Send Message Route Closeup if Quote Approval Needed.png" width="200" height="400">
 
 ---
 
