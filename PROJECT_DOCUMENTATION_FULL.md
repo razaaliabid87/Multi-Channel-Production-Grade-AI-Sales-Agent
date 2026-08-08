@@ -167,6 +167,8 @@ The tool workflows are intentionally separated from the main agent workflow so t
 # Workflow A — Ingestion & Identity
 
 Workflow A is the common intake and identity layer for all four customer channels.
+<img width="841" height="264" alt="Workflow-A ingestion identity SS" src="https://github.com/user-attachments/assets/c1b97978-203a-4774-932c-21014342a6ec" />
+
 
 ## Channel Triggers
 
@@ -386,6 +388,8 @@ There is **no separate conversation-memory store**. HubSpot Notes are the source
 # Workflow B — Agent Core
 
 Workflow B is the central AI reasoning and orchestration layer.
+<img width="800" height="260" alt="Workflow B - Agent Core (Slice 1_ History + Knowledge Retrieval only) SS" src="https://github.com/user-attachments/assets/edcdad88-86a2-49a9-83b0-093ec61ebe42" />
+
 
 ## Trigger
 
@@ -565,6 +569,8 @@ A delivery note is written only after the send operation has been confirmed as s
 # Knowledge Retrieval Tool
 
 The Knowledge Retrieval Tool is intentionally designed as a **general-purpose retrieval workflow** rather than a sales-specific component.
+<img width="847" height="256" alt="Tool - Knowledge Retrieval Tool (General Purpose) SS" src="https://github.com/user-attachments/assets/77d012a4-15a7-4e2d-b921-79ad91bf2aa0" />
+
 
 Its contract does not depend on CRM or channel-specific fields.
 
@@ -701,6 +707,8 @@ rather than throwing an unhandled exception that would terminate the agent turn.
 # Update HubSpot Property Tool
 
 This tool allows the AI agent to record qualification information as it is discovered during conversation.
+<img width="841" height="287" alt="Tool - Update HubSpot Property SS" src="https://github.com/user-attachments/assets/e66d29ba-74a0-49c6-ba0b-4e2c007665ba" />
+
 
 Supported information includes:
 
@@ -752,6 +760,8 @@ Unlike pricing, it does not require a separate human approval step, provided the
 # Book Meeting Tool
 
 The Book Meeting Tool creates a HubSpot meeting associated with the resolved contact.
+<img width="812" height="302" alt="Tool - Book Meeting SS" src="https://github.com/user-attachments/assets/45a962c8-2b5d-4caf-bf0e-65c252959320" />
+
 
 ## Validation
 
@@ -799,6 +809,8 @@ This has worked during testing, but the documentation identifies the association
 The Request Quote Draft Tool intentionally does **not** send a quote to the customer.
 
 HubSpot's native Quotes object requires a configured Products library and Quote template. Those prerequisites are not currently available in the documented HubSpot portal.
+
+<img width="786" height="227" alt="Tool - Request Quote Draft SS" src="https://github.com/user-attachments/assets/3cbd3c55-f8db-49a8-87da-9ccdacb4b805" />
 
 Instead, the workflow implements a controlled quote-request process.
 
